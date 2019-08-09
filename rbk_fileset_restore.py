@@ -28,8 +28,20 @@ class RubrikBackup:
 
 
 def usage():
-    print "Usage goes here"
-    exit(1)
+    sys.stderr.write("Usage: rbk_fileset_restore.py [-hlDy] [-c creds] [-r path] [-p path[,path,] backup rubrk\n")
+    sys.stderr.write("-h | --help : Prints this message\n")
+    sys.stderr.write("-l | --latest : Restore the latest backup\n")
+    sys.stderr.write("-D | --debug : Debug mode.  Print diagnostic info\n")
+    sys.stderr.write("-y | --yes : Don't confirm before running the restore job\n")
+    sys.stderr.write("-c | --creds= : Specify Rubrik creds [default: prompt user]\n")
+    sys.stderr.write("-r | --restore_to= : Specify a restore path\n")
+    sys.stderr.write("                     Default: Overwrite Original\n")
+    sys.stderr.write("                     <path>: Specify a different folder on same host\n")
+    sys.stderr.write("                     <host>;<path> : Export to a different host\n")
+    sys.stderr.write("-p | --paths= : Specify a list of paths to restore on the source [Default: root of the host/drive\n")
+    sys.stderr.write("backup : Specify the host/fileset of the backup.  Format: <host>:<fileset>\n")
+    sys.stderr.write("rubrik : Hostname or IP of the Rubrik\n\n")
+    exit(0)
 
 def dprint(message):
     if debug:
@@ -71,9 +83,11 @@ if __name__ == "__main__":
     do_latest = False
     fs_id = ""
     snap_list = []
+    src_path = []
     restore_location = ""
+    do_confirm = True
 
-    optlist, args = getopt.getopt(sys.argv[1:], 'hc:lDr:', ["help", "creds=", "latest", "debug", "restore_to"])
+    optlist, args = getopt.getopt(sys.argv[1:], 'hc:lDr:yp:', ["help", "creds=", "latest", "debug", "restore_to=", "yes", "paths="])
     for opt, a in optlist:
         if opt in ("-h", "--help"):
             usage()
@@ -85,6 +99,10 @@ if __name__ == "__main__":
             debug = True
         if opt in ('-r', '--restore_to'):
             restore_location = a
+        if opt in ('-y', '--yes'):
+            do_confirm = False
+        if opt in ('-p', '--paths'):
+            src_path = a.split(',')
 
     if args[0] == "?":
         usage()
@@ -138,6 +156,9 @@ if __name__ == "__main__":
                 print "Invalid Index: " + str(e)
                 continue
             valid = True
+    else:
+        i = 0
+        rest_id = snap_list[0].get_id()
     if not restore_location:
         valid = False
         while not valid:
@@ -161,22 +182,25 @@ if __name__ == "__main__":
             restore_id = validate_host(rubrik, restore_host)
             if not restore_id:
                 exit(1)
-    if os_type == "Windows":
-        src_path = get_path_from_source(rubrik,rest_id)
-    else:
+    if not src_path:
+        if os_type == "Windows":
+            src_path = get_path_from_source(rubrik,rest_id)
+        else:
             src_path = ["/"]
     dprint("SRC_PATH=" + str(src_path))
     print "Restore Request:"
     print "Source: " + host + ":" + fileset + " at " + snap_list[i].get_date()
+    print "Source Path: " + str(src_path)
     if restore_host == host and not restore_path:
         print "Destination: Overwrite Original"
     elif restore_host == host and restore_path:
         print "Destination: " + restore_path
     else:
         print "Destination: Export to " + restore_host + " : " + restore_path
-    confirm = raw_input("Procede? (y/n): ")
-    if not confirm.startswith('y') and not confirm.startswith('Y'):
-        exit(0)
+    if do_confirm:
+        confirm = raw_input("Procede? (y/n): ")
+        if not confirm.startswith('y') and not confirm.startswith('Y'):
+            exit(0)
     if restore_host == host and not restore_path:
         payload_list = []
         if os_type == "Windows":
@@ -186,6 +210,11 @@ if __name__ == "__main__":
                 restore_path = '\\'.join(pf)
                 restore_path = restore_path + "\\"
                 payload_list.append({"path": p, "restorePath": restore_path})
+        else:
+            if not restore_path:
+                restore_path = "/"
+            for p in src_path:
+                payload_list = [{"path": p, "restorePath": restore_path}]
 
         payload = {"restoreConfig": payload_list, "ignoreErrors": False}
         dprint("Restore Payload: " + str(payload))
