@@ -10,7 +10,8 @@ import datetime
 import pytz
 import time
 
-
+# A Class to hold a Rubrik Backup (snapshot)
+#
 class RubrikBackup:
     def __init__(self, id, date, cloud):
         self.id = id
@@ -48,6 +49,10 @@ def dprint(message):
         print message
     return()
 
+#
+# We can't use a Windows drive letter as a source.  This function finds all of the first files/directories and
+# creates a source path list
+#
 def get_path_from_source(rubrik, id):
     path_list = []
     params = {"path": "/"}
@@ -62,6 +67,10 @@ def get_path_from_source(rubrik, id):
             path_list.append(dir['filename'])
     return(path_list)
 
+#
+# Make sure a host for export is registered with the Rubrik.  Also make sure the name given is unique since the
+# API call will match substrings
+#
 def validate_host(rubrik, restore_host):
     restore_host_id = ""
     rbk_host = rubrik.get('v1', '/host?name=' + restore_host)
@@ -86,7 +95,9 @@ if __name__ == "__main__":
     src_path = []
     restore_location = ""
     do_confirm = True
-
+#
+# Process CLI arguments
+#
     optlist, args = getopt.getopt(sys.argv[1:], 'hc:lDr:yp:', ["help", "creds=", "latest", "debug", "restore_to=", "yes", "paths="])
     for opt, a in optlist:
         if opt in ("-h", "--help"):
@@ -108,6 +119,9 @@ if __name__ == "__main__":
         usage()
     (backup, rubrik_node) = args
     (host, fileset) = backup.split(':')
+#
+# Get credentials and make initial connection to Rubrik.  Pull the timezone on the Rubrik for conversion.
+# Find the fileset ID
     if not user:
         user = raw_input("User: ")
     if not password:
@@ -127,6 +141,9 @@ if __name__ == "__main__":
         sys.stderr.write("Can't find fileset\n")
         exit(1)
     dprint ("FS: " + fs_id)
+#
+# Grab all of the snaps and create a list of Backups using the Backup Class
+#
     rubrik_snaps = rubrik.get('v1', '/fileset/' + str(fs_id))
     for snap in rubrik_snaps['snapshots']:
         s_id = snap['id']
@@ -141,6 +158,9 @@ if __name__ == "__main__":
             s_archive = True
         snap_list.append(RubrikBackup(s_id, snap_dt, s_archive))
     index = 0
+#
+# Choose the correct backup
+#
     if not do_latest:
         for i, snap in enumerate(snap_list):
             if snap.is_archived():
@@ -159,6 +179,9 @@ if __name__ == "__main__":
     else:
         i = 0
         rest_id = snap_list[0].get_id()
+#
+# Set the correct restore location.  Prompt user if not given on CLI with -r
+#
     if not restore_location:
         valid = False
         while not valid:
@@ -182,12 +205,19 @@ if __name__ == "__main__":
             restore_id = validate_host(rubrik, restore_host)
             if not restore_id:
                 exit(1)
+#
+# Set the source path if not given on the CLI with -p.  Default is root.  If default and Windows,
+# get the top level files/directories.
+#
     if not src_path:
         if os_type == "Windows":
             src_path = get_path_from_source(rubrik,rest_id)
         else:
             src_path = ["/"]
     dprint("SRC_PATH=" + str(src_path))
+#
+# Summarize the job and get user confirmation (unless -y specified)
+#
     print "Restore Request:"
     print "Source: " + host + ":" + fileset + " at " + snap_list[i].get_date()
     print "Source Path: " + str(src_path)
@@ -198,9 +228,13 @@ if __name__ == "__main__":
     else:
         print "Destination: Export to " + restore_host + " : " + restore_path
     if do_confirm:
-        confirm = raw_input("Procede? (y/n): ")
+        confirm = raw_input("Proceed? (y/n): ")
         if not confirm.startswith('y') and not confirm.startswith('Y'):
             exit(0)
+#
+# Generate payload for restore job, then call restore_files or export_files
+#
+
     if restore_host == host and not restore_path:
         payload_list = []
         if os_type == "Windows":
@@ -236,6 +270,9 @@ if __name__ == "__main__":
         dprint("Restore Payload: " + str(payload))
         print "Restore job started"
         rubrik_restore = rubrik.post('internal', "/fileset/snapshot/" + snap_list[i].get_id() + "/export_files", payload)
+#
+# Monitor the job.  Give progress every 5 seconds.  Show success or failure
+#
     job_status_url = str(rubrik_restore['links'][0]['href']).split('/')
     job_status_path = "/" + "/".join(job_status_url[5:])
     done = False
